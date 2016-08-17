@@ -91,7 +91,7 @@ func CreateJob(j Job) error {
 	}
 	fmt.Printf("converted job to bytes: %s\n", string(b))
 
-	conn, err := amqp.Dial("amqp://" + os.Getenv("RABBIT"))
+	conn, err := amqp.Dial(os.Getenv("RABBIT"))
 	if err != nil {
 		return fmt.Errorf("error: Failed to create a connection to rabbit %s", err)
 	}
