@@ -44,7 +44,7 @@ A simple rabbitmq consumer and API service with two endpoints, GET /api/:uuid an
 
 #API
 
-POST /api?query='http://url.com' --> uuid of worker
+POST /api?query=http://url.com --> uuid of worker
 GET /api/:uuid --> html || status of the worker
 
 #TODO:
