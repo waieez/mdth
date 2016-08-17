@@ -1,13 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
-
-	"encoding/json"
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/pborman/uuid"
@@ -17,18 +16,17 @@ import (
 
 func main() {
 	router := httprouter.New()
+
+	// Handlers
 	router.POST("/api", createWorker) // ?query=http://www.google.com
 	router.GET("/api/:id", fetchData)
 
 	log.Fatal(http.ListenAndServe(":8080", router))
 }
 
-// API
+// API Handlers
 func createWorker(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	id := uuid.New()
-	log.Printf("Creating worker... %s\n", id)
-	query := r.FormValue("query")
-
+	// TODO: pass a client around instead of recreating it every time
 	cache, err := NewRedisClient()
 	if err != nil {
 		log.Printf("error: Failed to create a connection to Redis")
@@ -36,13 +34,16 @@ func createWorker(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		return
 	}
 
+	// Create Job
+	id := uuid.New()
+	log.Printf("info: Creating worker... %s\n", id)
+	query := r.FormValue("query")
 	// TODO: validation, for now assume scheme is passed in as well
 	unescaped, err := url.QueryUnescape(query)
 	if err != nil {
 		log.Printf("Failed to unescape query: %s\n", unescaped)
 		return
 	}
-	// put stuff into rabbitmq
 	j := Job{
 		Id:    id,
 		Query: unescaped,
@@ -54,6 +55,7 @@ func createWorker(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		return
 	}
 
+	// Insert into Redis, "Processing"
 	err = cache.Set(id, fmt.Sprintf("Processing url: %s for job: %s", unescaped, id), 0).Err()
 	if err != nil {
 		fmt.Printf("debug: Failed to set value in cache", err)
@@ -61,26 +63,29 @@ func createWorker(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		return
 	}
 
+	// Respond with UUID
 	w.Write([]byte(id))
 }
 
 func fetchData(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	id := ps.ByName("id")
-	// get stuff out of redis
-	log.Printf("Fetching data for id: %s\n", id)
-	// TODO: Create a single instance instead of creating a new client every time.
+	// TODO: pass a client around instead of recreating it every time
 	cache, err := NewRedisClient()
 	if err != nil {
 		log.Printf("error: Failed to create a connection to Redis")
 		w.WriteHeader(500)
 		return
 	}
+
+	// Get HTML/Status out of Redis
+	id := ps.ByName("id")
 	result, err := cache.Get(id).Result()
 	if err != nil {
 		log.Printf("debug: Failed to get value for id %s: %s", id, err)
 		w.WriteHeader(500)
 		return
 	}
+
+	// Respond with HTML/Status
 	w.Write([]byte(result))
 }
 
@@ -91,13 +96,9 @@ type Job struct {
 }
 
 func CreateJob(j Job) error {
-	// marshal into bytes
-	b, err := json.Marshal(j)
-	if err != nil {
-		return fmt.Errorf("warn: Failed to marshal job into bytes %s", err)
-	}
-	fmt.Printf("converted job to bytes: %s\n", string(b))
 
+	// TODO: Pull rabbit publisher out of CreateJob pass connection around instead
+	////////
 	conn, err := amqp.Dial(os.Getenv("RABBIT"))
 	if err != nil {
 		return fmt.Errorf("error: Failed to create a connection to rabbit %s", err)
@@ -117,7 +118,13 @@ func CreateJob(j Job) error {
 		false,  // no-wait
 		nil,    // arguments
 	)
+	//////
 
+	// Insert message into RabbitMQ
+	b, err := json.Marshal(j)
+	if err != nil {
+		return fmt.Errorf("warn: Failed to marshal job into bytes %s", err)
+	}
 	err = ch.Publish(
 		"",     // exchange
 		q.Name, // routing key

@@ -13,6 +13,7 @@ import (
 )
 
 func main() {
+	/////// Set up Redis/Rabbit Connections
 	cache, err := NewRedisClient()
 	if err != nil {
 		log.Fatalf("fatal: Failed to create a connection to Redis")
@@ -68,6 +69,7 @@ func main() {
 	}
 	forever := make(chan bool)
 
+	//// consume messages off 'job' queue
 	go func() {
 		for d := range msgs {
 			job := Job{}
@@ -78,12 +80,15 @@ func main() {
 				log.Printf("debug: Failed to unmarshal message body into job: %s\n", err)
 				continue
 			}
+
+			// Fetch data from url
 			html, err := GetData(&job)
 			if err != nil {
 				log.Printf("debug: Failed to get data for job: %s query: %s\n%s", job.Id, job.Query, err)
 				continue
 			}
 
+			// Insert into Redis
 			err = cache.Set(job.Id, html, 0).Err()
 			if err != nil {
 				fmt.Printf("debug: Failed to set value in cache", err)
