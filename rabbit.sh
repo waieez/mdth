@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export RABBIT="localhost:5672"
+export RABBIT="amqp://guest:guest@localhost:5672/"
 
 docker stop rabbit
 docker rm -f rabbit
