@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 
 	"encoding/json"
@@ -16,7 +17,7 @@ import (
 
 func main() {
 	router := httprouter.New()
-	router.POST("/api", createWorker)
+	router.POST("/api", createWorker) // ?query=http://www.google.com
 	router.GET("/api/:id", fetchData)
 
 	log.Fatal(http.ListenAndServe(":8080", router))
@@ -25,14 +26,23 @@ func main() {
 func createWorker(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	id := uuid.New()
 	log.Printf("Creating worker... %s\n", id)
+	query := r.FormValue("query")
+
+	// TODO: validation, for now assume scheme is passed in as well
+
+	unescaped, err := url.QueryUnescape(query)
+	if err != nil {
+		log.Printf("Failed to unescape query: %s\n", unescaped)
+		return
+	}
 	// put stuff into rabbitmq
 	j := Job{
 		Id:    id,
-		Query: "http://www.example.com",
+		Query: unescaped,
 	}
-	err := CreateJob(j)
+	err = CreateJob(j)
 	if err != nil {
-		log.Printf("Failed to create job %s", err)
+		log.Printf("Failed to create job %s\n", err)
 		w.WriteHeader(500)
 		return
 	}
