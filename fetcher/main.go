@@ -9,9 +9,15 @@ import (
 	"os"
 
 	"github.com/streadway/amqp"
+	redis "gopkg.in/redis.v4"
 )
 
 func main() {
+	cache, err := NewRedisClient()
+	if err != nil {
+		log.Fatalf("fatal: Failed to create a connection to Redis")
+		return
+	}
 	conn, err := amqp.Dial(os.Getenv("RABBIT"))
 	if err != nil {
 		log.Fatalf("fatal: Failed to connect to RabbitMQ: %s", err)
@@ -69,7 +75,7 @@ func main() {
 			//TODO: validate and handle dropped messages
 			d.Ack(false) // don't requeue messages
 			if err != nil {
-				log.Println("debug: Failed to unmarshal message body into job", err)
+				log.Printf("debug: Failed to unmarshal message body into job: %s\n", err)
 				continue
 			}
 			html, err := GetData(&job)
@@ -77,8 +83,13 @@ func main() {
 				log.Printf("debug: Failed to get data for job: %s query: %s\n%s", job.Id, job.Query, err)
 				continue
 			}
-			fmt.Println(html)
-			d.Ack(false)
+
+			err = cache.Set(job.Id, html, 0).Err()
+			if err != nil {
+				fmt.Printf("debug: Failed to set value in cache", err)
+				continue
+			}
+			log.Printf("info: added data to cache for job: %s\n", job.Id)
 		}
 	}()
 
@@ -100,8 +111,22 @@ func GetData(j *Job) (string, error) {
 	return string(b), nil
 }
 
-// copying this around cause my environment is borked
+// WORKER
 type Job struct {
 	Id    string `json:"id"`
 	Query string `json:"query"`
+}
+
+/// REDIS
+func NewRedisClient() (*redis.Client, error) {
+	client := redis.NewClient(&redis.Options{
+		Addr:     os.Getenv("REDIS"),
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+	_, err := client.Ping().Result()
+	if err != nil {
+		return nil, fmt.Errorf("error: Error while pinging Redis", err)
+	}
+	return client, nil
 }

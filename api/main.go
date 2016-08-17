@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -13,6 +12,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"github.com/pborman/uuid"
 	"github.com/streadway/amqp"
+	redis "gopkg.in/redis.v4"
 )
 
 func main() {
@@ -23,13 +23,20 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", router))
 }
 
+// API
 func createWorker(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	id := uuid.New()
 	log.Printf("Creating worker... %s\n", id)
 	query := r.FormValue("query")
 
-	// TODO: validation, for now assume scheme is passed in as well
+	cache, err := NewRedisClient()
+	if err != nil {
+		log.Printf("error: Failed to create a connection to Redis")
+		w.WriteHeader(500)
+		return
+	}
 
+	// TODO: validation, for now assume scheme is passed in as well
 	unescaped, err := url.QueryUnescape(query)
 	if err != nil {
 		log.Printf("Failed to unescape query: %s\n", unescaped)
@@ -46,6 +53,14 @@ func createWorker(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		w.WriteHeader(500)
 		return
 	}
+
+	err = cache.Set(id, fmt.Sprintf("Processing url: %s for job: %s", unescaped, id), 0).Err()
+	if err != nil {
+		fmt.Printf("debug: Failed to set value in cache", err)
+		w.WriteHeader(500)
+		return
+	}
+
 	w.Write([]byte(id))
 }
 
@@ -53,34 +68,26 @@ func fetchData(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	id := ps.ByName("id")
 	// get stuff out of redis
 	log.Printf("Fetching data for id: %s\n", id)
-	job := Job{
-		Id:    id,
-		Query: "http://www.example.com",
-	}
-	html, err := GetData(&job)
+	// TODO: Create a single instance instead of creating a new client every time.
+	cache, err := NewRedisClient()
 	if err != nil {
-		log.Printf("error: failed to get data: %s", err)
+		log.Printf("error: Failed to create a connection to Redis")
+		w.WriteHeader(500)
+		return
 	}
-	w.Write(html)
+	result, err := cache.Get(id).Result()
+	if err != nil {
+		log.Printf("debug: Failed to get value for id %s: %s", id, err)
+		w.WriteHeader(500)
+		return
+	}
+	w.Write([]byte(result))
 }
 
+/// WORKER
 type Job struct {
 	Id    string `json:"id"`
 	Query string `json:"query"`
-}
-
-func GetData(j *Job) ([]byte, error) {
-	resp, err := http.Get(j.Query) // ahue
-	if err != nil {
-		return nil, fmt.Errorf("warn: Failed to get data from query: %s", err)
-	}
-	b, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("warn: Failed to read response body: %s", err)
-	}
-	resp.Body.Close()
-
-	return b, nil
 }
 
 func CreateJob(j Job) error {
@@ -126,4 +133,18 @@ func CreateJob(j Job) error {
 	}
 	log.Printf(" [x] Sent %s", b)
 	return nil
+}
+
+/// REDIS
+func NewRedisClient() (*redis.Client, error) {
+	client := redis.NewClient(&redis.Options{
+		Addr:     os.Getenv("REDIS"),
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+	_, err := client.Ping().Result()
+	if err != nil {
+		return nil, fmt.Errorf("error: Error while pinging Redis", err)
+	}
+	return client, nil
 }
